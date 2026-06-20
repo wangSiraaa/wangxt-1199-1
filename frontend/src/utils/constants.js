@@ -43,6 +43,16 @@ export const SCHEDULE_STATUS = {
   CANCELLED: { label: '已取消', color: 'default' },
 };
 
+export const BATCH_RISK_TYPE = {
+  THERMAL_BATCH: { label: '批次热失控风险', color: 'red' },
+  QUALITY_BATCH: { label: '批次质量风险', color: 'orange' },
+};
+
+export const BATCH_RISK_LEVEL = {
+  CRITICAL: { label: '紧急', color: 'red' },
+  WARNING: { label: '预警', color: 'orange' },
+};
+
 export const ROLE_LABELS = {
   ADMIN: { label: '系统管理员', color: 'magenta' },
   DUTY: { label: '值班员', color: 'blue' },

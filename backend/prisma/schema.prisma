@@ -25,6 +25,9 @@ model User {
   releasedIsolation Isolation[]          @relation("IsolationRelease")
   schedules         InventorySchedule[]  @relation("ScheduleCreator")
   trajectories      StatusTrajectory[]   @relation("TrajectoryOperator")
+  detectedRisks     BatchRisk[]          @relation("BatchRiskDetector")
+  resolvedRisks     BatchRisk[]          @relation("BatchRiskResolver")
+  riskSchedules     BatchRiskSchedule[]  @relation("BatchScheduleSuggester")
 }
 
 model Station {
@@ -43,6 +46,7 @@ model Station {
 model BatteryPack {
   id             String   @id
   packCode       String   @unique
+  batchNo        String?
   model          String
   capacity       Int
   currentStatus  String   @default("AVAILABLE")
@@ -60,9 +64,11 @@ model BatteryPack {
   isolations   Isolation[]
   schedules    InventorySchedule[]
   trajectories StatusTrajectory[]
+  batchRisks   BatchRiskPack[]
 
   @@index([currentStatus])
   @@index([stationId])
+  @@index([batchNo])
 }
 
 model Alarm {
@@ -86,6 +92,7 @@ model Alarm {
   handler     User?             @relation("AlarmHandler", fields: [handledBy], references: [id])
   isolations  Isolation[]
   schedules   InventorySchedule[]
+  batchRisks  BatchRisk[]
 
   @@index([packId])
   @@index([alarmLevel])
@@ -137,6 +144,7 @@ model InventorySchedule {
   station     Station          @relation(fields: [stationId], references: [id])
   alarm       Alarm?           @relation(fields: [alarmId], references: [id])
   creator     User             @relation("ScheduleCreator", fields: [createdBy], references: [id])
+  batchRisks  BatchRiskSchedule[]
 
   @@index([stationId])
   @@index([status])
@@ -159,4 +167,69 @@ model StatusTrajectory {
   operator    User        @relation("TrajectoryOperator", fields: [operatorId], references: [id])
 
   @@index([packId])
+}
+
+model BatchRisk {
+  id                String   @id
+  batchNo           String
+  riskType          String
+  riskLevel         String
+  abnormalCount     Int      @default(0)
+  totalCount        Int      @default(0)
+  threshold         Int      @default(3)
+  description       String?
+  triggerAlarmId    String?
+  detectedBy        String
+  detectedAt        DateTime @default(now())
+  resolved          Boolean  @default(false)
+  resolvedAt        DateTime?
+  resolvedBy        String?
+  scheduleSuggestion String?
+  remark            String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  packs             BatchRiskPack[]
+  schedules         BatchRiskSchedule[]
+  detector          User @relation("BatchRiskDetector", fields: [detectedBy], references: [id])
+  resolver          User? @relation("BatchRiskResolver", fields: [resolvedBy], references: [id])
+  triggerAlarm      Alarm? @relation(fields: [triggerAlarmId], references: [id])
+
+  @@index([batchNo])
+  @@index([resolved])
+  @@index([riskLevel])
+}
+
+model BatchRiskPack {
+  id          String   @id
+  batchRiskId String
+  packId      String
+  packStatus  String
+  alarmIds    String?
+  addedAt     DateTime @default(now())
+
+  batchRisk   BatchRisk   @relation(fields: [batchRiskId], references: [id], onDelete: Cascade)
+  batteryPack BatteryPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+
+  @@index([batchRiskId])
+  @@index([packId])
+  @@unique([batchRiskId, packId])
+}
+
+model BatchRiskSchedule {
+  id             String   @id
+  batchRiskId    String
+  scheduleId     String
+  scheduleNo     String
+  suggestedBy    String
+  suggestedAt    DateTime @default(now())
+  scheduleType   String
+  note           String?
+
+  batchRisk      BatchRisk         @relation(fields: [batchRiskId], references: [id], onDelete: Cascade)
+  inventorySched InventorySchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  suggester      User              @relation("BatchScheduleSuggester", fields: [suggestedBy], references: [id])
+
+  @@index([batchRiskId])
+  @@index([scheduleId])
 }

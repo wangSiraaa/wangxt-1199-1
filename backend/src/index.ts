@@ -8,6 +8,7 @@ import batteryPackRoutes from './routes/batteryPacks';
 import alarmRoutes from './routes/alarms';
 import isolationRoutes from './routes/isolations';
 import scheduleRoutes from './routes/inventorySchedules';
+import batchRiskRoutes from './routes/batchRisks';
 
 dotenv.config();
 
@@ -32,6 +33,7 @@ app.use('/api/battery-packs', batteryPackRoutes);
 app.use('/api/alarms', alarmRoutes);
 app.use('/api/isolations', isolationRoutes);
 app.use('/api/schedules', scheduleRoutes);
+app.use('/api/batch-risks', batchRiskRoutes);
 
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Unhandled error:', err);

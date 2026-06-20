@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Table, Tag, Button, Space, Card, Row, Col, Statistic, Input, Select, Drawer,
-  Descriptions, Modal, Form, DatePicker, message, Spin, Empty, Alert, Timeline, Popconfirm, InputNumber, Tooltip,
+  Descriptions, Modal, Form, DatePicker, message, Spin, Empty, Alert, Timeline, Popconfirm, InputNumber, Tooltip, Progress,
 } from 'antd';
 import {
   TruckOutlined, SearchOutlined, PlusOutlined, EyeOutlined,
   CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined,
   ReloadOutlined, SafetyCertificateOutlined,
   ImportOutlined, ExportOutlined,
-  WarningOutlined,
+  WarningOutlined, ClusterOutlined, RiseOutlined, FireOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import axios from '../utils/request';
-import { PACK_STATUS, SCHEDULE_STATUS, SCHEDULE_TYPE, formatDate, ROLE_LABELS, formatDateShort } from '../utils/constants';
+import { PACK_STATUS, SCHEDULE_STATUS, SCHEDULE_TYPE, formatDate, ROLE_LABELS, formatDateShort, BATCH_RISK_LEVEL } from '../utils/constants';
 import { useUserStore } from '../store/user';
 
 const { Option } = Select;
@@ -32,6 +32,7 @@ export default function InventorySchedules() {
   const [keyword, setKeyword] = useState('');
   const [stations, setStations] = useState([]);
   const [batteryPacks, setBatteryPacks] = useState([]);
+  const [batchRiskSummary, setBatchRiskSummary] = useState([]);
   const [form] = Form.useForm();
 
   const loadData = useCallback(async () => {
@@ -51,6 +52,7 @@ export default function InventorySchedules() {
       }
       setSchedules(list);
       setStats(data.stats);
+      setBatchRiskSummary(data.batchRiskSummary || []);
     } finally {
       setLoading(false);
     }
@@ -351,6 +353,90 @@ export default function InventorySchedules() {
         showIcon
         style={{ marginBottom: 16 }}
       />
+
+      {batchRiskSummary.length > 0 && (
+        <Card
+          size="small"
+          style={{
+            marginBottom: 16,
+            border: `2px solid ${BATCH_RISK_LEVEL[batchRiskSummary[0].riskLevel]?.color === 'red' ? '#ff7875' : '#ffc53d'}`,
+            background: `linear-gradient(135deg, ${BATCH_RISK_LEVEL[batchRiskSummary[0].riskLevel]?.color === 'red' ? '#fff1f0' : '#fffbe6'} 0%, #fff 100%)`,
+          }}
+          title={
+            <Space>
+              <FireOutlined style={{ color: '#d4380d', fontSize: 18 }} />
+              <b style={{ fontSize: 15 }}>批次风险调度建议（{batchRiskSummary.length} 个未解决批次）</b>
+              <Tag color="red">请立即调整库存和补货计划</Tag>
+            </Space>
+          }
+          extra={
+            hasRole('DISPATCH', 'ADMIN') ? (
+              <Button
+                type="primary"
+                size="small"
+                danger={batchRiskSummary.some(r => r.riskLevel === 'CRITICAL')}
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setCreateOpen(true);
+                  form.resetFields();
+                  form.setFieldsValue({
+                    scheduleType: 'REPLENISH',
+                    remark: `批次风险补货：${batchRiskSummary.map(r => r.batchNo).join('、')}`,
+                  });
+                  message.info('已自动填写补货类型，请选择站点和数量');
+                }}
+              >
+                快速创建补货
+              </Button>
+            ) : null
+          }
+        >
+          <Row gutter={[12, 12]}>
+            {batchRiskSummary.map(r => (
+              <Col xs={24} md={12} lg={8} key={r.id}>
+                <Card
+                  size="small"
+                  type="inner"
+                  style={{
+                    borderColor: BATCH_RISK_LEVEL[r.riskLevel]?.color === 'red' ? '#ffccc7' : '#ffe58f',
+                    height: '100%',
+                  }}
+                  title={
+                    <Space>
+                      <ClusterOutlined />
+                      <Tag color={BATCH_RISK_LEVEL[r.riskLevel]?.color}>
+                        {BATCH_RISK_LEVEL[r.riskLevel]?.label}
+                      </Tag>
+                      <b>{r.batchNo}</b>
+                    </Space>
+                  }
+                >
+                  <div style={{ marginBottom: 8 }}>
+                    <Progress
+                      percent={Math.round((r.abnormalCount / (r.totalCount || r.abnormalCount)) * 100)}
+                      showInfo
+                      strokeColor={BATCH_RISK_LEVEL[r.riskLevel]?.color === 'red' ? '#ff4d4f' : '#faad14'}
+                      size="small"
+                      format={(pct) => `${r.abnormalCount}/${r.totalCount || '?'} 异常 (${pct}%)`}
+                    />
+                  </div>
+                  <Alert
+                    type={r.riskLevel === 'CRITICAL' ? 'error' : 'warning'}
+                    showIcon
+                    icon={<RiseOutlined />}
+                    style={{ marginBottom: 8 }}
+                    message={<b>调度建议</b>}
+                    description={r.scheduleSuggestion || '请联系调度中心确认补货数量'}
+                  />
+                  <div style={{ fontSize: 12, color: '#999' }}>
+                    检测于 {formatDate(r.detectedAt)}
+                  </div>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        </Card>
+      )}
 
       <Card size="small">
         <div className="table-toolbar">

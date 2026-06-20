@@ -120,16 +120,33 @@ async function main() {
   const models = ['CATL-100kWh', 'BYD-85kWh', 'GOTION-75kWh', 'CALB-95kWh', 'EVE-80kWh'];
   const locations = ['A-01', 'A-02', 'A-03', 'B-01', 'B-02', 'B-03', 'C-01', 'C-02'];
 
+  const batchNos = [
+    'CATL-2026-W23', 'BYD-2026-W22', 'GOTION-2026-W21', 'CALB-2026-W23', 'EVE-2026-W20',
+    'CATL-2026-W22', 'BYD-2026-W23',
+  ];
+
   const batteryPacks = [];
   for (let i = 1; i <= 40; i++) {
     const stationIndex = (i - 1) % stations.length;
     const statusIndex = i % statusOptions.length;
+
+    let currentStatus = statusOptions[statusIndex];
+    let batchNo = batchNos[i % batchNos.length];
+
+    if (i >= 5 && i <= 7) {
+      currentStatus = i === 5 ? 'ALARM' : i === 6 ? 'ISOLATED' : 'LOCKED';
+      batchNo = 'CATL-2026-W23-DEFECT';
+    } else if (i === 12 || i === 13) {
+      batchNo = 'CATL-2026-W23-DEFECT';
+    }
+
     batteryPacks.push({
       id: `pack-${String(i).padStart(4, '0')}`,
       packCode: `BAT${String(i).padStart(6, '0')}`,
+      batchNo,
       model: models[i % models.length],
       capacity: [75, 80, 85, 95, 100][i % 5],
-      currentStatus: statusOptions[statusIndex],
+      currentStatus,
       healthLevel: 80 + (i % 21),
       stationId: stations[stationIndex].id,
       location: locations[i % locations.length],
@@ -244,6 +261,54 @@ async function main() {
   }
   console.log(`✅ 初始化 6 条库存调度记录完成`);
 
+  const defectBatchNo = 'CATL-2026-W23-DEFECT';
+  const defectBatchPacks = batteryPacks.filter(p => p.batchNo === defectBatchNo);
+  const abnormalPacks = defectBatchPacks.filter(p =>
+    p.currentStatus === 'ALARM' || p.currentStatus === 'ISOLATED' || p.currentStatus === 'LOCKED'
+  );
+  const relatedAlarm = await prisma.alarm.findFirst({
+    where: { packId: { in: abnormalPacks.map(p => p.id) }, handled: false },
+  });
+
+  if (abnormalPacks.length >= 3) {
+    const existingRisk = await prisma.batchRisk.findFirst({
+      where: { batchNo: defectBatchNo, resolved: false },
+    });
+
+    if (!existingRisk) {
+      const availableInBatch = defectBatchPacks.filter(p => p.currentStatus === 'AVAILABLE' || p.currentStatus === 'CHARGING').length;
+
+      const batchRisk = await prisma.batchRisk.create({
+        data: {
+          id: 'batch-risk-demo-001',
+          batchNo: defectBatchNo,
+          riskType: 'QUALITY_BATCH',
+          riskLevel: abnormalPacks.length >= 4 ? 'CRITICAL' : 'WARNING',
+          abnormalCount: abnormalPacks.length,
+          totalCount: defectBatchPacks.length,
+          threshold: 3,
+          triggerAlarmId: relatedAlarm?.id,
+          detectedBy: 'user-qc-001',
+          detectedAt: new Date(),
+          resolved: false,
+          description: `批次 ${defectBatchNo} 存在批量质量风险，已检测到 ${abnormalPacks.length} 个电池包处于异常状态（告警/隔离/锁定）`,
+          scheduleSuggestion: availableInBatch < 3
+            ? `批次可用库存不足（剩余${availableInBatch}个可用），建议立即创建紧急补货单，同时暂停该批次的换电使用，对全部${defectBatchPacks.length}个包进行质检`
+            : `批次剩余可用${availableInBatch}个，建议对该批次所有包进行全面复检，视复检结果决定是否启动召回流程`,
+          packs: {
+            create: abnormalPacks.map(p => ({
+              id: `brp-seed-${p.id}`,
+              packId: p.id,
+              packStatus: p.currentStatus,
+              alarmIds: JSON.stringify([`batch-seed-${p.id}`]),
+            })),
+          },
+        },
+      });
+      console.log(`✅ 创建批次风险记录完成: ${batchRisk.id} (${defectBatchNo}, ${abnormalPacks.length}/${defectBatchPacks.length}异常)`);
+    }
+  }
+
   console.log('\n============================================');
   console.log('🎉 种子数据初始化完成！');
   console.log('============================================');
@@ -256,6 +321,11 @@ async function main() {
   console.log('              qc02 / 123456');
   console.log('  🚚 调度员:   dispatch01 / 123456  (库存调度)');
   console.log('              dispatch02 / 123456');
+  console.log('');
+  console.log('演示数据说明:');
+  console.log(`  ⚠️  批次 ${defectBatchNo}: 预置了 ${abnormalPacks.length} 个异常包，可在调度页面看到批次风险建议`);
+  console.log('  🔥 在告警管理页面登记热失控风险告警，将自动锁定并移入隔离区');
+  console.log('  📊 在告警管理页面点击"批次风险"按钮，可手动触发批次检测');
   console.log('');
 }
 

@@ -6,11 +6,11 @@ import {
 import {
   DatabaseOutlined, SearchOutlined, PlusOutlined, EyeOutlined,
   ExclamationCircleOutlined, LockOutlined, SafetyCertificateOutlined, TruckOutlined,
-  ReloadOutlined,
+  ReloadOutlined, ClusterOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import axios from '../utils/request';
-import { PACK_STATUS, formatDate, ROLE_LABELS } from '../utils/constants';
+import { PACK_STATUS, formatDate, ROLE_LABELS, BATCH_RISK_LEVEL } from '../utils/constants';
 import { useUserStore } from '../store/user';
 
 const { Option } = Select;
@@ -27,6 +27,8 @@ export default function BatteryPacks() {
   const [filterStatus, setFilterStatus] = useState();
   const [keyword, setKeyword] = useState('');
   const [stationId, setStationId] = useState('');
+  const [batchNo, setBatchNo] = useState('');
+  const [hasBatchRisk, setHasBatchRisk] = useState();
   const [stations, setStations] = useState([]);
   const [form] = Form.useForm();
 
@@ -37,13 +39,15 @@ export default function BatteryPacks() {
       if (filterStatus) params.append('status', filterStatus);
       if (keyword) params.append('keyword', keyword);
       if (stationId) params.append('stationId', stationId);
+      if (batchNo) params.append('batchNo', batchNo);
+      if (hasBatchRisk !== undefined && hasBatchRisk !== '') params.append('hasBatchRisk', String(hasBatchRisk));
       const { data } = await axios.get(`/battery-packs?${params.toString()}`);
       setPacks(data.packs);
       setStats(data.stats);
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, keyword, stationId]);
+  }, [filterStatus, keyword, stationId, batchNo, hasBatchRisk]);
 
   useEffect(() => {
     loadStations();
@@ -96,6 +100,19 @@ export default function BatteryPacks() {
       dataIndex: 'model',
       key: 'model',
       width: 120,
+    },
+    {
+      title: '批次号',
+      dataIndex: 'batchNo',
+      key: 'batchNo',
+      width: 130,
+      render: (v, r) => v ? (
+        <Tooltip title={`批次号：${v}`}>
+          <Tag color="blue" style={{ margin: 0 }}>
+            <ClusterOutlined /> {v}
+          </Tag>
+        </Tooltip>
+      ) : <span style={{ color: '#bbb' }}>-</span>,
     },
     {
       title: '容量(kWh)',
@@ -174,6 +191,24 @@ export default function BatteryPacks() {
       ),
     },
     {
+      title: '批次风险',
+      key: 'batchRisk',
+      width: 110,
+      align: 'center',
+      render: (_, r) => (
+        r.batchRisks && r.batchRisks.length > 0 ? (
+          <Tooltip title={`批次${r.batchRisks[0].batchRisk.batchNo}异常${r.batchRisks[0].batchRisk.abnormalCount}个`}>
+            <Tag
+              color={BATCH_RISK_LEVEL[r.batchRisks[0].batchRisk.riskLevel]?.color}
+              icon={<WarningOutlined />}
+            >
+              {BATCH_RISK_LEVEL[r.batchRisks[0].batchRisk.riskLevel]?.label}
+            </Tag>
+          </Tooltip>
+        ) : <span style={{ color: '#bbb' }}>正常</span>
+      ),
+    },
+    {
       title: '操作',
       key: 'action',
       width: 100,
@@ -217,7 +252,7 @@ export default function BatteryPacks() {
         <StatsCard title="告警" value={stats.alarm || 0} color="#fa8c16" icon={<ExclamationCircleOutlined />} />
         <StatsCard title="隔离" value={stats.isolated || 0} color="#722ed1" icon={<SafetyCertificateOutlined />} />
         <StatsCard title="锁定" value={stats.locked || 0} color="#f5222d" icon={<LockOutlined />} />
-        <StatsCard title="运输" value={stats.inTransit || 0} color="#2f54eb" icon={<TruckOutlined />} />
+        <StatsCard title="批次风险" value={stats.withBatchRisk || 0} color="#d4380d" icon={<ClusterOutlined />} />
       </Row>
 
       <Card size="small">
@@ -226,15 +261,24 @@ export default function BatteryPacks() {
             allowClear
             placeholder="搜索编码/型号"
             prefix={<SearchOutlined />}
-            style={{ width: 220 }}
+            style={{ width: 180 }}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
+            onPressEnter={loadData}
+          />
+          <Input
+            allowClear
+            placeholder="批次号"
+            prefix={<ClusterOutlined />}
+            style={{ width: 150 }}
+            value={batchNo}
+            onChange={(e) => setBatchNo(e.target.value)}
             onPressEnter={loadData}
           />
           <Select
             allowClear
             placeholder="状态筛选"
-            style={{ width: 140 }}
+            style={{ width: 120 }}
             value={filterStatus}
             onChange={setFilterStatus}
           >
@@ -244,8 +288,18 @@ export default function BatteryPacks() {
           </Select>
           <Select
             allowClear
+            placeholder="批次风险"
+            style={{ width: 120 }}
+            value={hasBatchRisk}
+            onChange={setHasBatchRisk}
+          >
+            <Option value={true}>仅风险包</Option>
+            <Option value={false}>无风险</Option>
+          </Select>
+          <Select
+            allowClear
             placeholder="所属站点"
-            style={{ width: 200 }}
+            style={{ width: 180 }}
             value={stationId}
             onChange={setStationId}
           >
@@ -254,6 +308,9 @@ export default function BatteryPacks() {
             ))}
           </Select>
           <Button type="primary" onClick={loadData}>查询</Button>
+          <Button onClick={() => {
+            setKeyword(''); setBatchNo(''); setFilterStatus(); setHasBatchRisk(); setStationId('');
+          }}>重置</Button>
         </div>
 
         <Table
@@ -292,6 +349,11 @@ export default function BatteryPacks() {
             <Descriptions title="基本信息" bordered column={2} size="small">
               <Descriptions.Item label="电池包编码"><b>{detail.packCode}</b></Descriptions.Item>
               <Descriptions.Item label="型号">{detail.model}</Descriptions.Item>
+              <Descriptions.Item label="批次号">
+                {detail.batchNo ? (
+                  <Tag color="blue"><ClusterOutlined /> {detail.batchNo}</Tag>
+                ) : <span style={{ color: '#999' }}>未设置</span>}
+              </Descriptions.Item>
               <Descriptions.Item label="容量">{detail.capacity} kWh</Descriptions.Item>
               <Descriptions.Item label="健康度">
                 <Tag color={detail.healthLevel >= 80 ? 'green' : 'orange'}>{detail.healthLevel}%</Tag>
@@ -402,6 +464,41 @@ export default function BatteryPacks() {
               />
             ) : <Empty description="暂无调度记录" />}
 
+            <Divider orientation="left" plain>批次风险记录</Divider>
+            {detail.batchRisks && detail.batchRisks.length > 0 ? (
+              <List
+                size="small"
+                bordered
+                dataSource={detail.batchRisks}
+                renderItem={(br) => (
+                  <List.Item>
+                    <List.Item.Meta
+                      title={
+                        <Space>
+                          <ClusterOutlined style={{ color: '#d4380d' }} />
+                          <Tag color={BATCH_RISK_LEVEL[br.batchRisk.riskLevel]?.color}>
+                            {BATCH_RISK_LEVEL[br.batchRisk.riskLevel]?.label}
+                          </Tag>
+                          <b>批次 {br.batchRisk.batchNo}</b>
+                          <span style={{ color: '#888' }}>异常 {br.batchRisk.abnormalCount}/{br.batchRisk.totalCount} 个</span>
+                          {br.batchRisk.resolved
+                            ? <Tag color="green">已解决</Tag>
+                            : <Tag color="red">未解决</Tag>}
+                        </Space>
+                      }
+                      description={
+                        <Space split="·" size={4} wrap>
+                          <span>检测人：{br.batchRisk.detectedByUser?.realName || '系统自动检测'}</span>
+                          <span>{formatDate(br.batchRisk.detectedAt)}</span>
+                          <span>{br.packStatus && `处理状态：${br.packStatus}`}</span>
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            ) : <Empty description="暂无批次风险记录" />}
+
             <Divider orientation="left" plain>状态轨迹</Divider>
             <div className="trajectory-timeline">
               {detail.trajectories && detail.trajectories.length > 0 ? (
@@ -449,6 +546,11 @@ export default function BatteryPacks() {
             <Col span={12}>
               <Form.Item label="电池包编码" name="packCode" rules={[{ required: true }]}>
                 <Input placeholder="例如：BAT000041" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="批次号" name="batchNo" tooltip="供应商批次号，用于批量风险检测">
+                <Input placeholder="例如：CATL-2026-W23" prefix={<ClusterOutlined />} />
               </Form.Item>
             </Col>
             <Col span={12}>

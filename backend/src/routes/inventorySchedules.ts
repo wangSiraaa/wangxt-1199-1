@@ -43,7 +43,16 @@ router.get('/', async (req: AuthRequest, res) => {
     cancelled: await prisma.inventorySchedule.count({ where: { ...where, status: 'CANCELLED' } }),
   };
 
-  res.json({ schedules, stats });
+  const batchRiskSummary = await prisma.batchRisk.findMany({
+    where: { resolved: false },
+    select: {
+      id: true, batchNo: true, riskLevel: true, abnormalCount: true, totalCount: true,
+      scheduleSuggestion: true, detectedAt: true,
+    },
+    orderBy: [{ riskLevel: 'desc' }, { detectedAt: 'desc' }],
+  });
+
+  res.json({ schedules, stats, batchRiskSummary });
 });
 
 router.get('/:id', async (req: AuthRequest, res) => {

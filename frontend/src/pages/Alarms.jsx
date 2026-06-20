@@ -6,10 +6,10 @@ import {
 import {
   AlertOutlined, SearchOutlined, PlusOutlined, EyeOutlined,
   WarningOutlined, CheckCircleOutlined, FireOutlined, ReloadOutlined,
-  SafetyCertificateOutlined,
+  SafetyCertificateOutlined, ClusterOutlined, RiseOutlined,
 } from '@ant-design/icons';
 import axios from '../utils/request';
-import { ALARM_LEVEL, PACK_STATUS, formatDate, ROLE_LABELS } from '../utils/constants';
+import { ALARM_LEVEL, PACK_STATUS, formatDate, ROLE_LABELS, BATCH_RISK_LEVEL } from '../utils/constants';
 import { useUserStore } from '../store/user';
 
 const { Option } = Select;
@@ -29,7 +29,9 @@ export default function Alarms() {
   const [filterThermal, setFilterThermal] = useState();
   const [filterLevel, setFilterLevel] = useState();
   const [keyword, setKeyword] = useState('');
+  const [batchNoKeyword, setBatchNoKeyword] = useState('');
   const [batteryPacks, setBatteryPacks] = useState([]);
+  const [openBatchRisks, setOpenBatchRisks] = useState([]);
   const [form] = Form.useForm();
   const [isoForm] = Form.useForm();
 
@@ -40,21 +42,24 @@ export default function Alarms() {
       if (filterHandled !== undefined && filterHandled !== null) params.append('handled', String(filterHandled));
       if (filterThermal !== undefined && filterThermal !== null) params.append('isThermal', String(filterThermal));
       if (filterLevel) params.append('level', filterLevel);
+      if (batchNoKeyword) params.append('batchNo', batchNoKeyword);
       const { data } = await axios.get(`/alarms?${params.toString()}`);
       let list = data.alarms;
       if (keyword) {
         list = list.filter(a =>
           a.alarmType.includes(keyword) ||
           a.batteryPack?.packCode?.includes(keyword) ||
-          a.description?.includes(keyword)
+          a.description?.includes(keyword) ||
+          a.batteryPack?.batchNo?.includes(keyword)
         );
       }
       setAlarms(list);
       setStats(data.stats);
+      setOpenBatchRisks(data.openBatchRisks || []);
     } finally {
       setLoading(false);
     }
-  }, [filterHandled, filterThermal, filterLevel, keyword]);
+  }, [filterHandled, filterThermal, filterLevel, keyword, batchNoKeyword]);
 
   useEffect(() => {
     loadData();
@@ -77,11 +82,67 @@ export default function Alarms() {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
-      await axios.post('/alarms', values);
-      message.success('告警登记成功！电池包状态已更新');
-      setCreateOpen(false);
-      form.resetFields();
-      loadData();
+      const { data } = await axios.post('/alarms', values);
+
+      Modal.success({
+        title: '告警登记成功',
+        width: 560,
+        content: (
+          <div>
+            <div style={{ marginBottom: 12 }}>
+              <Tag color="green" icon={<CheckCircleOutlined />}> 告警记录 #{data.alarm?.id?.slice(0, 8)} 已创建</Tag>
+            </div>
+            {data.autoIsolation && (
+              <Alert
+                style={{ marginBottom: 12 }}
+                message={
+                  <span>
+                    <FireOutlined style={{ color: '#f5222d' }} /> <b>热失控风险自动处理：</b>
+                    电池包已自动锁定并移入隔离区，隔离记录 #{data.autoIsolation.id?.slice(0, 8)}
+                  </span>
+                }
+                type="error"
+                showIcon
+                description={data.autoIsolation.isolationReason}
+              />
+            )}
+            {data.batchRisk && (
+              <Alert
+                style={{ marginBottom: 12 }}
+                message={
+                  <span>
+                    <ClusterOutlined style={{ color: BATCH_RISK_LEVEL[data.batchRisk.riskLevel]?.color === 'red' ? '#f5222d' : '#fa8c16' }} /> <b>批次风险已检测：</b>
+                    批次 {data.batchRisk.batchNo} 共 {data.batchRisk.abnormalCount} 个包异常
+                    <Tag color={BATCH_RISK_LEVEL[data.batchRisk.riskLevel]?.color} style={{ marginLeft: 8 }}>
+                      {BATCH_RISK_LEVEL[data.batchRisk.riskLevel]?.label}
+                    </Tag>
+                  </span>
+                }
+                type="warning"
+                showIcon
+                description={
+                  <Space direction="vertical" size={4}>
+                    <span style={{ color: '#666' }}>
+                      <RiseOutlined /> 调度建议：{data.batchRisk.scheduleSuggestion}
+                    </span>
+                    {data.batchRiskWarning && (
+                      <span style={{ color: '#fa8c16', fontWeight: 500 }}>⚠️ {data.batchRiskWarning}</span>
+                    )}
+                  </Space>
+                }
+              />
+            )}
+            {!data.autoIsolation && !data.batchRisk && (
+              <Alert message="电池包状态已更新为告警" type="info" showIcon />
+            )}
+          </div>
+        ),
+        onOk: () => {
+          setCreateOpen(false);
+          form.resetFields();
+          loadData();
+        },
+      });
     } catch (e) { /* handled */ }
   };
 
@@ -149,10 +210,17 @@ export default function Alarms() {
     {
       title: '电池包',
       key: 'pack',
-      width: 130,
+      width: 150,
       render: (_, r) => (
         <Space direction="vertical" size={2}>
           <span style={{ fontWeight: 500 }}>{r.batteryPack?.packCode}</span>
+          {r.batteryPack?.batchNo && (
+            <Tooltip title={`批次号：${r.batteryPack.batchNo}`}>
+              <Tag color="blue" style={{ fontSize: 10, margin: 0, padding: '0 6px' }}>
+                <ClusterOutlined /> {r.batteryPack.batchNo}
+              </Tag>
+            </Tooltip>
+          )}
           <Tag color={PACK_STATUS[r.batteryPack?.currentStatus]?.color} style={{ fontSize: 11, margin: 0 }}>
             {PACK_STATUS[r.batteryPack?.currentStatus]?.label}
           </Tag>
@@ -251,13 +319,60 @@ export default function Alarms() {
           type="error"
           showIcon
           closable
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 12 }}
           action={
             <Button size="small" danger onClick={() => { setFilterThermal(true); setFilterHandled(false); }}>
               立即查看
             </Button>
           }
         />
+      )}
+
+      {openBatchRisks.length > 0 && (
+        <Card
+          size="small"
+          style={{ marginBottom: 12, borderColor: BATCH_RISK_LEVEL[openBatchRisks[0].riskLevel]?.color === 'red' ? '#ffccc7' : '#ffe58f' }}
+          title={
+            <Space>
+              <ClusterOutlined style={{ color: '#d4380d' }} />
+              <b>批次风险预警（共 {openBatchRisks.length} 个未解决批次）</b>
+              <Tag color="orange">请调度中心及时调整库存</Tag>
+            </Space>
+          }
+          type="inner"
+        >
+          <Space wrap size={[8, 8]}>
+            {openBatchRisks.map(r => (
+              <Alert
+                key={r.id}
+                type={r.riskLevel === 'CRITICAL' ? 'error' : 'warning'}
+                showIcon
+                style={{ width: 380 }}
+                message={
+                  <Space size={6}>
+                    <Tag color={BATCH_RISK_LEVEL[r.riskLevel]?.color}>
+                      {BATCH_RISK_LEVEL[r.riskLevel]?.label}
+                    </Tag>
+                    <b>批次 {r.batchNo}</b>
+                    <span>异常 {r.abnormalCount}/{r.totalCount} 个包</span>
+                    <span style={{ color: '#888' }}>
+                      {r.schedules && r.schedules.length > 0 ? `（已关联${r.schedules.length}个调度）` : '（未创建调度）'}
+                    </span>
+                  </Space>
+                }
+                description={r.scheduleSuggestion}
+                action={
+                  hasRole('DISPATCH', 'ADMIN') ? (
+                    <Button size="small" type="primary" onClick={() => {
+                      window.openBatchRiskCreateSchedule = r;
+                      message.info('请前往库存调度创建补货计划');
+                    }}>去调度</Button>
+                  ) : null
+                }
+              />
+            ))}
+          </Space>
+        </Card>
       )}
 
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
@@ -289,9 +404,17 @@ export default function Alarms() {
             allowClear
             placeholder="搜索类型/电池包"
             prefix={<SearchOutlined />}
-            style={{ width: 200 }}
+            style={{ width: 180 }}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
+          />
+          <Input
+            allowClear
+            placeholder="批次号筛选"
+            prefix={<ClusterOutlined />}
+            style={{ width: 160 }}
+            value={batchNoKeyword}
+            onChange={(e) => setBatchNoKeyword(e.target.value)}
           />
           <Select
             allowClear
@@ -326,7 +449,8 @@ export default function Alarms() {
           </Select>
           <Button type="primary" onClick={loadData}>查询</Button>
           <Button onClick={() => {
-            setFilterHandled(undefined); setFilterThermal(undefined); setFilterLevel(undefined); setKeyword('');
+            setFilterHandled(undefined); setFilterThermal(undefined); setFilterLevel(undefined);
+            setKeyword(''); setBatchNoKeyword('');
           }}>重置</Button>
         </div>
 
@@ -385,6 +509,11 @@ export default function Alarms() {
               <Descriptions.Item label="电池包编码">
                 <b>{detail.batteryPack?.packCode}</b>
               </Descriptions.Item>
+              <Descriptions.Item label="批次号">
+                {detail.batteryPack?.batchNo ? (
+                  <Tag color="blue"><ClusterOutlined /> {detail.batteryPack?.batchNo}</Tag>
+                ) : <span style={{ color: '#999' }}>-</span>}
+              </Descriptions.Item>
               <Descriptions.Item label="当前状态">
                 <Tag color={PACK_STATUS[detail.batteryPack?.currentStatus]?.color}>
                   {PACK_STATUS[detail.batteryPack?.currentStatus]?.label}
@@ -428,6 +557,34 @@ export default function Alarms() {
                   type="info"
                   showIcon
                 />
+              </>
+            )}
+
+            {detail.batchRisks && detail.batchRisks.length > 0 && (
+              <>
+                <div style={{ marginTop: 20, fontWeight: 600, marginBottom: 8 }}>
+                  <ClusterOutlined style={{ color: '#d4380d' }} /> 关联批次风险
+                </div>
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {detail.batchRisks.map(r => (
+                    <Alert
+                      key={r.id}
+                      type={r.riskLevel === 'CRITICAL' ? 'error' : 'warning'}
+                      showIcon
+                      message={
+                        <Space>
+                          <Tag color={BATCH_RISK_LEVEL[r.riskLevel]?.color}>
+                            {BATCH_RISK_LEVEL[r.riskLevel]?.label}
+                          </Tag>
+                          <b>批次 {r.batchNo}</b>
+                          <span style={{ color: '#888' }}>异常 {r.abnormalCount}/{r.totalCount} 个包</span>
+                          {!r.resolved ? <Tag color="red">未解决</Tag> : <Tag color="green">已解决</Tag>}
+                        </Space>
+                      }
+                      description={r.scheduleSuggestion}
+                    />
+                  ))}
+                </Space>
               </>
             )}
           </>

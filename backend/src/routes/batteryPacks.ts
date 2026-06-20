@@ -8,7 +8,7 @@ const router = Router();
 router.use(authMiddleware);
 
 router.get('/', async (req: AuthRequest, res) => {
-  const { status, stationId, keyword } = req.query;
+  const { status, stationId, keyword, batchNo, hasBatchRisk } = req.query;
 
   const where: any = {};
   if (status && typeof status === 'string') {
@@ -17,10 +17,14 @@ router.get('/', async (req: AuthRequest, res) => {
   if (stationId && typeof stationId === 'string') {
     where.stationId = stationId;
   }
+  if (batchNo && typeof batchNo === 'string') {
+    where.batchNo = { contains: batchNo };
+  }
   if (keyword && typeof keyword === 'string') {
     where.OR = [
       { packCode: { contains: keyword } },
       { model: { contains: keyword } },
+      { batchNo: { contains: keyword } },
     ];
   }
 
@@ -38,22 +42,39 @@ router.get('/', async (req: AuthRequest, res) => {
         take: 1,
         orderBy: { createdAt: 'desc' },
       },
+      batchRisks: {
+        where: { batchRisk: { resolved: false } },
+        take: 1,
+        include: { batchRisk: { select: { id: true, riskLevel: true, abnormalCount: true, batchNo: true } } },
+      },
     },
     orderBy: [{ currentStatus: 'asc' }, { updatedAt: 'desc' }],
   });
 
+  let resultPacks = packs;
+  if (hasBatchRisk !== undefined && typeof hasBatchRisk === 'string') {
+    const needRisk = hasBatchRisk === 'true';
+    resultPacks = packs.filter(p =>
+      needRisk
+        ? (p.batchRisks && p.batchRisks.length > 0)
+        : !(p.batchRisks && p.batchRisks.length > 0)
+    );
+  }
+
+  const whereCount = { ...where };
   const stats = {
-    total: await prisma.batteryPack.count({ where }),
-    available: await prisma.batteryPack.count({ where: { ...where, currentStatus: 'AVAILABLE' } }),
-    alarm: await prisma.batteryPack.count({ where: { ...where, currentStatus: 'ALARM' } }),
-    isolated: await prisma.batteryPack.count({ where: { ...where, currentStatus: 'ISOLATED' } }),
-    locked: await prisma.batteryPack.count({ where: { ...where, currentStatus: 'LOCKED' } }),
-    charging: await prisma.batteryPack.count({ where: { ...where, currentStatus: 'CHARGING' } }),
-    inUse: await prisma.batteryPack.count({ where: { ...where, currentStatus: 'IN_USE' } }),
-    inTransit: await prisma.batteryPack.count({ where: { ...where, currentStatus: 'IN_TRANSIT' } }),
+    total: await prisma.batteryPack.count({ where: whereCount }),
+    available: await prisma.batteryPack.count({ where: { ...whereCount, currentStatus: 'AVAILABLE' } }),
+    alarm: await prisma.batteryPack.count({ where: { ...whereCount, currentStatus: 'ALARM' } }),
+    isolated: await prisma.batteryPack.count({ where: { ...whereCount, currentStatus: 'ISOLATED' } }),
+    locked: await prisma.batteryPack.count({ where: { ...whereCount, currentStatus: 'LOCKED' } }),
+    charging: await prisma.batteryPack.count({ where: { ...whereCount, currentStatus: 'CHARGING' } }),
+    inUse: await prisma.batteryPack.count({ where: { ...whereCount, currentStatus: 'IN_USE' } }),
+    inTransit: await prisma.batteryPack.count({ where: { ...whereCount, currentStatus: 'IN_TRANSIT' } }),
+    withBatchRisk: packs.filter(p => p.batchRisks && p.batchRisks.length > 0).length,
   };
 
-  res.json({ packs, stats });
+  res.json({ packs: resultPacks, stats });
 });
 
 router.get('/:id', async (req: AuthRequest, res) => {
@@ -101,6 +122,7 @@ router.get('/:id', async (req: AuthRequest, res) => {
 
 const createPackSchema = z.object({
   packCode: z.string().min(1, '电池包编码不能为空'),
+  batchNo: z.string().optional(),
   model: z.string().min(1, '型号不能为空'),
   capacity: z.number().int().min(1, '容量必须大于0'),
   healthLevel: z.number().int().min(0).max(100),
@@ -132,6 +154,7 @@ router.post('/', requireRoles(ROLES.ADMIN, ROLES.QC), async (req: AuthRequest, r
 });
 
 const updatePackSchema = z.object({
+  batchNo: z.string().nullable().optional(),
   model: z.string().optional(),
   capacity: z.number().int().min(1).optional(),
   healthLevel: z.number().int().min(0).max(100).optional(),
