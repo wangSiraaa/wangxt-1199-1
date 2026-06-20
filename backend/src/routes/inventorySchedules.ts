@@ -92,6 +92,31 @@ router.post('/', requireRoles(ROLES.DISPATCH, ROLES.ADMIN), async (req: AuthRequ
       return res.status(404).json({ error: '目标站点不存在' });
     }
 
+    const protectedStatuses = [PACK_STATUS.LOCKED, PACK_STATUS.ISOLATED];
+    if (protectedStatuses.includes(pack.currentStatus as any)) {
+      const statusLabel = pack.currentStatus === PACK_STATUS.LOCKED ? '紧急锁定' : '隔离中';
+      const activeAlarm = await prisma.alarm.findFirst({
+        where: { packId: pack.id, handled: false },
+        orderBy: { createdAt: 'desc' },
+      });
+      const activeIsolation = await prisma.isolation.findFirst({
+        where: { packId: pack.id, released: false },
+      });
+      let detail = '';
+      if (activeAlarm?.isThermalRunawayRisk) {
+        detail = '，原因：热失控风险告警，需质检员解除隔离后方可调度';
+      } else if (activeIsolation) {
+        detail = `，原因：${activeIsolation.isolationReason}，需解除隔离后方可调度`;
+      } else {
+        detail = '，需解除锁定/隔离后方可调度';
+      }
+      return res.status(400).json({
+        error: `电池包当前处于「${statusLabel}」状态${detail}`,
+        code: 'PACK_LOCKED_OR_ISOLATED',
+        packStatus: pack.currentStatus,
+      });
+    }
+
     const count = await prisma.inventorySchedule.count();
     const scheduleNo = `SCH${Date.now()}${String(count + 1).padStart(4, '0')}`;
 
@@ -112,30 +137,25 @@ router.post('/', requireRoles(ROLES.DISPATCH, ROLES.ADMIN), async (req: AuthRequ
         },
       });
 
-      if (data.scheduleType !== undefined || true) {
-        const protectedStatuses = [PACK_STATUS.LOCKED, PACK_STATUS.ISOLATED];
-        if (!protectedStatuses.includes(pack.currentStatus as any)) {
-          const oldStatus = pack.currentStatus;
-          await tx.batteryPack.update({
-            where: { id: data.packId },
-            data: { currentStatus: PACK_STATUS.IN_TRANSIT },
-          });
+      const oldStatus = pack.currentStatus;
+      await tx.batteryPack.update({
+        where: { id: data.packId },
+        data: { currentStatus: PACK_STATUS.IN_TRANSIT },
+      });
 
-          await tx.statusTrajectory.create({
-            data: {
-              id: crypto.randomUUID(),
-              packId: data.packId,
-              oldStatus,
-              newStatus: PACK_STATUS.IN_TRANSIT,
-              operatorId: userId,
-              operation: `调度发起-${data.scheduleType}`,
-              remark: data.operatorRemark,
-              relatedScheduleId: newSchedule.id,
-              relatedAlarmId: data.alarmId,
-            },
-          });
-        }
-      }
+      await tx.statusTrajectory.create({
+        data: {
+          id: crypto.randomUUID(),
+          packId: data.packId,
+          oldStatus,
+          newStatus: PACK_STATUS.IN_TRANSIT,
+          operatorId: userId,
+          operation: `调度发起-${data.scheduleType}`,
+          remark: data.operatorRemark,
+          relatedScheduleId: newSchedule.id,
+          relatedAlarmId: data.alarmId,
+        },
+      });
 
       return newSchedule;
     });
@@ -197,6 +217,14 @@ router.patch('/:id', requireRoles(ROLES.DISPATCH, ROLES.ADMIN, ROLES.DUTY), asyn
       });
 
       if (data.status === 'COMPLETED') {
+        const protectedStatuses = [PACK_STATUS.LOCKED, PACK_STATUS.ISOLATED];
+        if (protectedStatuses.includes(pack.currentStatus as any) &&
+            (schedule.scheduleType === 'RECALL' || schedule.scheduleType === 'MAINTENANCE' ||
+             schedule.scheduleType === 'TRANSFER_OUT')) {
+          const statusLabel = pack.currentStatus === PACK_STATUS.LOCKED ? '紧急锁定' : '隔离中';
+          throw new Error(`电池包当前处于「${statusLabel}」状态，无法完成${schedule.scheduleType === 'RECALL' ? '召回' : schedule.scheduleType === 'MAINTENANCE' ? '维护' : '转出'}操作，请先解除锁定/隔离`);
+        }
+
         const oldStatus = pack.currentStatus;
         let newStatus = PACK_STATUS.AVAILABLE;
 
@@ -283,6 +311,12 @@ router.patch('/:id', requireRoles(ROLES.DISPATCH, ROLES.ADMIN, ROLES.DUTY), asyn
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors[0].message });
+    }
+    if (error instanceof Error) {
+      return res.status(400).json({
+        error: error.message,
+        code: 'PACK_LOCKED_OR_ISOLATED',
+      });
     }
     console.error('Update schedule error:', error);
     res.status(500).json({ error: '更新调度单失败' });

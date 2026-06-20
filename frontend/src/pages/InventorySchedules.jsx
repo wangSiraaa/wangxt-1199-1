@@ -67,7 +67,15 @@ export default function InventorySchedules() {
       axios.get('/battery-packs'),
     ]);
     setStations(stationsRes.data.stations);
-    setBatteryPacks(packsRes.data.packs);
+    const allPacks = packsRes.data.packs;
+    const availablePacks = allPacks.filter(p =>
+      p.currentStatus !== 'LOCKED' && p.currentStatus !== 'ISOLATED'
+    );
+    setBatteryPacks(availablePacks);
+    const protectedCount = allPacks.length - availablePacks.length;
+    if (protectedCount > 0) {
+      console.info(`[调度页面] 已过滤 ${protectedCount} 个处于锁定/隔离状态的电池包`);
+    }
   };
 
   const openDetail = async (id) => {
@@ -79,6 +87,22 @@ export default function InventorySchedules() {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
+
+      const selectedPack = batteryPacks.find(p => p.id === values.packId);
+      if (selectedPack && (selectedPack.currentStatus === 'LOCKED' || selectedPack.currentStatus === 'ISOLATED')) {
+        const statusLabel = selectedPack.currentStatus === 'LOCKED' ? '紧急锁定' : '隔离中';
+        Modal.error({
+          title: '⚠️ 无法创建调度单',
+          content: (
+            <div>
+              <p>电池包 <b>{selectedPack.packCode}</b> 当前处于「{statusLabel}」状态，不能参与调度。</p>
+              <p style={{ marginTop: 8 }}>请先联系质检员处理告警或解除隔离后再尝试。</p>
+            </div>
+          ),
+        });
+        return;
+      }
+
       await axios.post('/schedules', {
         ...values,
         scheduledDate: values.scheduledDate ? values.scheduledDate.toISOString() : undefined,
@@ -87,7 +111,16 @@ export default function InventorySchedules() {
       setCreateOpen(false);
       form.resetFields();
       loadData();
-    } catch (e) { /* handled */ }
+    } catch (e) {
+      if (e?.response?.data?.code === 'PACK_LOCKED_OR_ISOLATED') {
+        Modal.error({
+          title: '⚠️ 无法创建调度单',
+          content: e.response.data.error,
+        });
+      } else if (e?.response?.data?.error) {
+        message.error(e.response.data.error);
+      }
+    }
   };
 
   const updateSchedule = async (id, data) => {
@@ -96,7 +129,16 @@ export default function InventorySchedules() {
       message.success('调度状态已更新');
       if (drawerOpen && detail?.id === id) openDetail(id);
       loadData();
-    } catch (e) { /* handled */ }
+    } catch (e) {
+      if (e?.response?.data?.code === 'PACK_LOCKED_OR_ISOLATED') {
+        Modal.error({
+          title: '⚠️ 无法执行操作',
+          content: e.response.data.error,
+        });
+      } else if (e?.response?.data?.error) {
+        message.error(e.response.data.error);
+      }
+    }
   };
 
   const handleConfirmArrival = (record) => {
