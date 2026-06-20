@@ -1,0 +1,162 @@
+// Prisma schema for Battery Isolation System
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id
+  username  String   @unique
+  password  String
+  realName  String
+  role      String
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  alarms            Alarm[]              @relation("AlarmRegister")
+  handledAlarms     Alarm[]              @relation("AlarmHandler")
+  isolations        Isolation[]          @relation("IsolationJudge")
+  releasedIsolation Isolation[]          @relation("IsolationRelease")
+  schedules         InventorySchedule[]  @relation("ScheduleCreator")
+  trajectories      StatusTrajectory[]   @relation("TrajectoryOperator")
+}
+
+model Station {
+  id        String   @id
+  code      String   @unique
+  name      String
+  address   String?
+  capacity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  batteryPacks BatteryPack[]
+  schedules    InventorySchedule[]
+}
+
+model BatteryPack {
+  id             String   @id
+  packCode       String   @unique
+  model          String
+  capacity       Int
+  currentStatus  String   @default("AVAILABLE")
+  healthLevel    Int
+  stationId      String?
+  location       String?
+  cycleCount     Int      @default(0)
+  manufactureDate DateTime?
+  lastCheckDate  DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  station      Station?             @relation(fields: [stationId], references: [id])
+  alarms       Alarm[]
+  isolations   Isolation[]
+  schedules    InventorySchedule[]
+  trajectories StatusTrajectory[]
+
+  @@index([currentStatus])
+  @@index([stationId])
+}
+
+model Alarm {
+  id                 String    @id
+  packId             String
+  alarmType          String
+  alarmLevel         String
+  description        String?
+  registeredBy       String
+  registeredAt       DateTime  @default(now())
+  isThermalRunawayRisk Boolean @default(false)
+  handled            Boolean   @default(false)
+  handledAt          DateTime?
+  handledBy          String?
+  remark             String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  batteryPack BatteryPack       @relation(fields: [packId], references: [id])
+  registrant  User              @relation("AlarmRegister", fields: [registeredBy], references: [id])
+  handler     User?             @relation("AlarmHandler", fields: [handledBy], references: [id])
+  isolations  Isolation[]
+  schedules   InventorySchedule[]
+
+  @@index([packId])
+  @@index([alarmLevel])
+}
+
+model Isolation {
+  id              String    @id
+  packId          String
+  alarmId         String?
+  isolationReason String
+  reasonDetail    String?
+  judgedBy        String
+  judgedAt        DateTime  @default(now())
+  isEmergency     Boolean   @default(false)
+  released        Boolean   @default(false)
+  releasedAt      DateTime?
+  releasedBy      String?
+  releaseRemark   String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  batteryPack BatteryPack @relation(fields: [packId], references: [id])
+  alarm       Alarm?      @relation(fields: [alarmId], references: [id])
+  judge       User        @relation("IsolationJudge", fields: [judgedBy], references: [id])
+  releaser    User?       @relation("IsolationRelease", fields: [releasedBy], references: [id])
+
+  @@index([packId])
+  @@index([released])
+}
+
+model InventorySchedule {
+  id               String   @id
+  scheduleNo       String   @unique
+  scheduleType     String
+  packId           String
+  stationId        String
+  alarmId          String?
+  quantity         Int      @default(1)
+  scheduledDate    DateTime
+  actualArrivalDate DateTime?
+  status           String   @default("PENDING")
+  createdBy        String
+  operatorRemark   String?
+  recipientRemark  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  batteryPack BatteryPack      @relation(fields: [packId], references: [id])
+  station     Station          @relation(fields: [stationId], references: [id])
+  alarm       Alarm?           @relation(fields: [alarmId], references: [id])
+  creator     User             @relation("ScheduleCreator", fields: [createdBy], references: [id])
+
+  @@index([stationId])
+  @@index([status])
+}
+
+model StatusTrajectory {
+  id                String   @id
+  packId            String
+  oldStatus         String
+  newStatus         String
+  operatorId        String
+  operation         String
+  remark            String?
+  relatedAlarmId    String?
+  relatedIsolationId String?
+  relatedScheduleId  String?
+  operatedAt        DateTime @default(now())
+
+  batteryPack BatteryPack @relation(fields: [packId], references: [id])
+  operator    User        @relation("TrajectoryOperator", fields: [operatorId], references: [id])
+
+  @@index([packId])
+}
